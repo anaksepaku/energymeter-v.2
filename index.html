@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>PZEM Energy Monitor - Real Time Status</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        background: #f5f5f5;
+      }
+      .container {
+        max-width: 900px;
+        margin: 0 auto;
+      }
+      .card {
+        background: white;
+        padding: 20px;
+        margin: 10px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        display: inline-block;
+        min-width: 120px;
+        text-align: center;
+      }
+      .status-card {
+        width: 100%;
+        text-align: left;
+        margin-bottom: 20px;
+      }
+      .value {
+        font-size: 24px;
+        font-weight: bold;
+        color: #2c3e50;
+      }
+      .unit {
+        font-size: 14px;
+        color: #7f8c8d;
+      }
+      #status {
+        padding: 15px;
+        border-radius: 8px;
+        margin: 10px 0;
+        font-weight: bold;
+        text-align: center;
+        transition: all 0.3s ease;
+      }
+      .online {
+        background: #4caf50;
+        color: white;
+      }
+      .offline {
+        background: #f44336;
+        color: white;
+      }
+      .connecting {
+        background: #ff9800;
+        color: white;
+      }
+      .data-table {
+        width: 100%;
+        background: white;
+        border-radius: 10px;
+        padding: 15px;
+        margin-top: 20px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 8px;
+        text-align: left;
+        border-bottom: 1px solid #ddd;
+      }
+      th {
+        background: #f1f1f1;
+      }
+      .last-seen {
+        font-size: 12px;
+        color: #666;
+        margin-top: 5px;
+      }
+      .blink {
+        animation: blink 1s infinite;
+      }
+      @keyframes blink {
+        0% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.5;
+        }
+        100% {
+          opacity: 1;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>⚡ Home Energy Monitor</h1>
+      <p>Hello ichibos🐣 welcome home</p>
+
+      <div class="card status-card">
+        <h3>Device Status</h3>
+        <div id="status" class="connecting">🔄 Checking device status...</div>
+        <div id="lastSeen" class="last-seen">Last seen: Never</div>
+        <div id="deviceInfo" class="last-seen">Device ID: Unknown</div>
+      </div>
+
+      <div>
+        <div class="card">
+          <h3>Voltage</h3>
+          <div class="value" id="voltage">--<span class="unit">V</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Current</h3>
+          <div class="value" id="current">--<span class="unit">A</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Power</h3>
+          <div class="value" id="power">--<span class="unit">W</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Energy</h3>
+          <div class="value" id="energy">--<span class="unit">kWh</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Frequency</h3>
+          <div class="value" id="frequency">--<span class="unit">Hz</span></div>
+        </div>
+
+        <div class="card">
+          <h3>Power Factor</h3>
+          <div class="value" id="powerFactor">--</div>
+        </div>
+      </div>
+
+      <div style="margin-top: 20px; text-align: center">
+        <button onclick="loadData()">🔄 Refresh Now</button>
+        <button onclick="startAutoRefresh()">▶️ Auto Refresh</button>
+        <button onclick="stopAutoRefresh()">⏹️ Stop Auto</button>
+        <button onclick="resetData()">🗑️ Reset Data</button>
+      </div>
+
+      <div class="data-table">
+        <h3>Last 10 Readings</h3>
+        <table id="dataTable">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Status</th>
+              <th>Voltage (V)</th>
+              <th>Current (A)</th>
+              <th>Power (W)</th>
+            </tr>
+          </thead>
+          <tbody id="tableBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <script>
+      let refreshInterval;
+      let lastSuccessfulUpdate = null;
+
+      // Load data pertama kali
+      loadData();
+      loadHistory();
+
+      function loadData() {
+        fetch("/api/latest")
+          .then((response) => response.json())
+          .then((data) => {
+            updateDeviceStatus(data.device_status);
+
+            if (data.voltage !== undefined) {
+              updateDisplay(data);
+              lastSuccessfulUpdate = new Date();
+            }
+          })
+          .catch((error) => {
+            updateOfflineStatus();
+            console.error("Error:", error);
+          });
+      }
+
+      function loadHistory() {
+        fetch("/api/all")
+          .then((response) => response.json())
+          .then((data) => {
+            updateTable(data.slice(-10));
+          })
+          .catch((error) => {
+            console.error("Error loading history:", error);
+          });
+      }
+
+      function updateDeviceStatus(status) {
+        const statusElement = document.getElementById("status");
+        const lastSeenElement = document.getElementById("lastSeen");
+        const deviceInfoElement = document.getElementById("deviceInfo");
+
+        if (status.isOnline) {
+          statusElement.className = "online";
+          statusElement.innerHTML = "✅ DEVICE ONLINE - Connected to ESP32";
+          statusElement.classList.remove("blink");
+
+          if (status.lastSeen) {
+            const lastSeen = new Date(status.lastSeen);
+            const now = new Date();
+            const diffSeconds = Math.floor((now - lastSeen) / 1000);
+
+            lastSeenElement.innerHTML = `Last data: ${lastSeen.toLocaleTimeString()} (${diffSeconds} seconds ago)`;
+          }
+
+          if (status.deviceId) {
+            deviceInfoElement.innerHTML = `Device ID: ${status.deviceId}`;
+          }
+        } else {
+          statusElement.className = "offline";
+          statusElement.innerHTML = "❌ DEVICE OFFLINE - ESP32 not connected";
+          statusElement.classList.add("blink");
+          lastSeenElement.innerHTML = "Waiting for device connection...";
+        }
+      }
+
+      function updateOfflineStatus() {
+        const statusElement = document.getElementById("status");
+        const lastSeenElement = document.getElementById("lastSeen");
+
+        statusElement.className = "offline";
+        statusElement.innerHTML = "❌ SERVER ERROR - Cannot connect to server";
+        statusElement.classList.add("blink");
+        lastSeenElement.innerHTML = "Check server connection";
+      }
+
+      function updateDisplay(data) {
+        document.getElementById("voltage").innerHTML =
+          data.voltage.toFixed(1) + '<span class="unit">V</span>';
+        document.getElementById("current").innerHTML =
+          data.current.toFixed(3) + '<span class="unit">A</span>';
+        document.getElementById("power").innerHTML =
+          data.power.toFixed(1) + '<span class="unit">W</span>';
+        document.getElementById("energy").innerHTML =
+          data.energy.toFixed(3) + '<span class="unit">kWh</span>';
+        document.getElementById("frequency").innerHTML =
+          data.frequency.toFixed(1) + '<span class="unit">Hz</span>';
+        document.getElementById("powerFactor").textContent =
+          data.power_factor.toFixed(2);
+      }
+
+      function updateTable(data) {
+        const tbody = document.getElementById("tableBody");
+        tbody.innerHTML = "";
+
+        data.reverse().forEach((item) => {
+          const status = item.deviceId ? "✅ Online" : "❌ Offline";
+          const row = `<tr>
+                    <td>${item.timestamp || "N/A"}</td>
+                    <td>${status}</td>
+                    <td>${item.voltage?.toFixed(1) || "0.0"}</td>
+                    <td>${item.current?.toFixed(3) || "0.000"}</td>
+                    <td>${item.power?.toFixed(1) || "0.0"}</td>
+                </tr>`;
+          tbody.innerHTML += row;
+        });
+      }
+
+      function startAutoRefresh() {
+        refreshInterval = setInterval(() => {
+          loadData();
+          loadHistory();
+        }, 3000); // Refresh setiap 3 detik
+        document.getElementById("status").textContent =
+          "🔄 Auto refresh ON (3s)";
+      }
+
+      function stopAutoRefresh() {
+        clearInterval(refreshInterval);
+        const statusElement = document.getElementById("status");
+        if (!statusElement.classList.contains("offline")) {
+          statusElement.textContent = "⏹️ Auto refresh OFF";
+        }
+      }
+
+      function resetData() {
+        if (confirm("Are you sure you want to reset all data?")) {
+          fetch("/api/reset", { method: "DELETE" })
+            .then(() => {
+              loadData();
+              loadHistory();
+              alert("Data reset successfully!");
+            })
+            .catch((error) => {
+              alert("Error resetting data: " + error);
+            });
+        }
+      }
+
+      // Auto refresh status setiap 5 detik
+      setInterval(loadData, 5000);
+      setInterval(loadHistory, 10000);
+
+      // Start auto refresh by default
+      startAutoRefresh();
+    </script>
+  </body>
+</html>
