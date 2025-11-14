@@ -1,0 +1,251 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <PZEM004Tv30.h>
+
+// WiFi Settings
+const char* ssid = "Home";
+const char* password = "bayardulu";
+const char* serverURL = "http://172.16.0.111:3000/api/data";
+
+// PZEM Setup - Coba berbagai konfigurasi pin
+// Pilihan 1: Software Serial
+PZEM004Tv30 pzem(Serial2, 16, 17); // RX=16, TX=17
+
+// Device ID
+String deviceID;
+
+void setup() {
+  Serial.begin(115200);
+  
+  // Tunggu serial connection
+  while (!Serial) {
+    delay(100);
+  }
+  
+  Serial.println();
+  Serial.println("🚀 Starting PZEM-004T Energy Monitor...");
+  Serial.println("==========================================");
+  
+  // Generate Device ID
+  deviceID = getDeviceID();
+  Serial.println("Device ID: " + deviceID);
+  
+  // Test PZEM Connection secara mendalam
+  Serial.println();
+  Serial.println("🔍 Testing PZEM Connection...");
+  testPZEMConnection();
+  
+  // Connect to WiFi
+  Serial.println();
+  connectToWiFi();
+  
+  Serial.println();
+  Serial.println("✅ System Ready!");
+  Serial.println("==========================================");
+}
+
+void loop() {
+  // Check WiFi connection
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("❌ WiFi disconnected! Reconnecting...");
+    connectToWiFi();
+  }
+  
+  // Read and send sensor data
+  readAndSendData();
+  
+  delay(5000); // Send every 5 seconds
+}
+
+// Function to generate unique Device ID
+String getDeviceID() {
+  uint64_t chipid = ESP.getEfuseMac();
+  String id = "PZEM_" + String((uint32_t)(chipid >> 32), HEX) + String((uint32_t)chipid, HEX);
+  return id;
+}
+
+// Function to check if value is valid
+bool isValid(float value) {
+  if (isnan(value)) {
+    Serial.print("[NaN] ");
+    return false;
+  }
+  if (!isfinite(value)) {
+    Serial.print("[Infinite] ");
+    return false;
+  }
+  return true;
+}
+
+// Test PZEM connection secara detail
+void testPZEMConnection() {
+  Serial.println("📌 Testing PZEM-004T Connection...");
+  Serial.println("📌 Expected Wiring:");
+  Serial.println("   PZEM VCC  → ESP32 5V");
+  Serial.println("   PZEM GND  → ESP32 GND"); 
+  Serial.println("   PZEM TX   → ESP32 GPIO16 (RX2)");
+  Serial.println("   PZEM RX   → ESP32 GPIO17 (TX2)");
+  Serial.println();
+  
+  // Test multiple readings
+  for (int i = 1; i <= 5; i++) {
+    Serial.print("Test #" + String(i) + ": ");
+    
+    float voltage = pzem.voltage();
+    float current = pzem.current();
+    float power = pzem.power();
+    
+    Serial.print("V=" + String(voltage, 1) + "V, ");
+    Serial.print("I=" + String(current, 3) + "A, ");
+    Serial.print("P=" + String(power, 1) + "W");
+    
+    if (isnan(voltage)) {
+      Serial.println(" ❌ FAILED");
+      Serial.println("💡 Troubleshooting:");
+      Serial.println("   1. Check power supply to PZEM");
+      Serial.println("   2. Verify wiring connections");
+      Serial.println("   3. Ensure load is connected to PZEM");
+      Serial.println("   4. Try different ESP32 pins");
+    } else if (voltage > 0) {
+      Serial.println(" ✅ SUCCESS");
+      break;
+    } else {
+      Serial.println(" ⚠️  No Voltage (check load)");
+    }
+    
+    delay(2000);
+  }
+}
+
+// WiFi connection
+void connectToWiFi() {
+  Serial.println("📡 Connecting to WiFi: " + String(ssid));
+  
+  WiFi.begin(ssid, password);
+  int attempts = 0;
+  
+  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+    delay(1000);
+    Serial.print(".");
+    attempts++;
+  }
+  
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\n✅ WiFi Connected!");
+    Serial.println("IP Address: " + WiFi.localIP().toString());
+  } else {
+    Serial.println("\n❌ WiFi Connection Failed!");
+  }
+}
+
+// Baca semua data dari PZEM
+void readPZEMData(float &voltage, float &current, float &power, float &energy, float &frequency, float &pf) {
+  Serial.println("🔍 Reading PZEM sensors...");
+  
+  // Baca semua parameter
+  voltage = pzem.voltage();
+  current = pzem.current();
+  power = pzem.power();
+  energy = pzem.energy();
+  frequency = pzem.frequency();
+  pf = pzem.pf();
+  
+  // Debug output
+  Serial.println("📊 Raw PZEM Readings:");
+  Serial.println("  Voltage: " + String(voltage) + " V");
+  Serial.println("  Current: " + String(current) + " A");
+  Serial.println("  Power: " + String(power) + " W");
+  Serial.println("  Energy: " + String(energy) + " kWh");
+  Serial.println("  Frequency: " + String(frequency) + " Hz");
+  Serial.println("  Power Factor: " + String(pf));
+}
+
+// Main function to read and send data
+void readAndSendData() {
+  float voltage, current, power, energy, frequency, pf;
+  
+  // Baca data dari PZEM
+  readPZEMData(voltage, current, power, energy, frequency, pf);
+  
+  // Validasi data
+  if (!isValid(voltage)) {
+    Serial.println("❌ Invalid voltage reading!");
+    voltage = 0.0;
+  }
+  if (!isValid(current)) {
+    Serial.println("❌ Invalid current reading!");
+    current = 0.0;
+  }
+  if (!isValid(power)) {
+    Serial.println("❌ Invalid power reading!");
+    power = 0.0;
+  }
+  
+  // Tampilkan data yang akan dikirim
+  Serial.println("📤 Data to be sent:");
+  Serial.println("  Voltage: " + String(voltage, 1) + " V");
+  Serial.println("  Current: " + String(current, 3) + " A");
+  Serial.println("  Power: " + String(power, 1) + " W");
+  Serial.println("  Energy: " + String(energy, 3) + " kWh");
+  Serial.println("  Frequency: " + String(frequency, 1) + " Hz");
+  Serial.println("  Power Factor: " + String(pf, 2));
+  
+  // Kirim ke server hanya jika ada data valid
+  if (voltage > 0 || current > 0 || power > 0) {
+    sendToServer(voltage, current, power, energy, frequency, pf);
+  } else {
+    Serial.println("⚠️  No valid data to send!");
+  }
+  
+  Serial.println("--------------------");
+}
+
+// Function to send data to server
+void sendToServer(float v, float i, float p, float e, float f, float pf) {
+  HTTPClient http;
+  
+  Serial.println("🌐 Connecting to server: " + String(serverURL));
+  
+  if (!http.begin(serverURL)) {
+    Serial.println("❌ Failed to connect to server!");
+    return;
+  }
+  
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(10000);
+  
+  // Buat JSON data
+  DynamicJsonDocument doc(512);
+  doc["deviceId"] = deviceID;
+  doc["voltage"] = v;
+  doc["current"] = i;
+  doc["power"] = p;
+  doc["energy"] = e;
+  doc["frequency"] = f;
+  doc["power_factor"] = pf;
+  doc["timestamp"] = millis();
+  
+  String jsonData;
+  serializeJson(doc, jsonData);
+  
+  Serial.println("📤 Sending JSON: " + jsonData);
+  
+  // Kirim POST request
+  int httpCode = http.POST(jsonData);
+  
+  // Handle response
+  if (httpCode > 0) {
+    Serial.println("✅ HTTP Response: " + String(httpCode));
+    
+    if (httpCode == 200) {
+      String response = http.getString();
+      Serial.println("📨 Server response: " + response);
+    }
+  } else {
+    Serial.println("❌ HTTP Error: " + String(httpCode));
+    Serial.println("Error: " + http.errorToString(httpCode));
+  }
+  
+  http.end();
+}
